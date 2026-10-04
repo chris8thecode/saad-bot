@@ -324,6 +324,53 @@ export function startPairingServer({ getSock, port, host = '127.0.0.1' }: Pairin
         return
       }
 
+      if (req.method === 'POST' && url.pathname === '/api/send') {
+        let body: { to?: unknown; text?: unknown }
+        try {
+          body = JSON.parse(await readBody(req)) as { to?: unknown; text?: unknown }
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid-json' })
+          return
+        }
+
+        const digits = String(body.to ?? '').replace(/\D/g, '')
+        const text = String(body.text ?? '')
+        if (digits.length < 11 || digits.length > 15 || digits.startsWith('0')) {
+          sendJson(res, 400, { ok: false, error: 'invalid-number' })
+          return
+        }
+        if (!text || text.length > 2000) {
+          sendJson(res, 400, { ok: false, error: 'invalid-text' })
+          return
+        }
+        const ready = await waitForReady()
+        if (!ready) {
+          sendJson(res, 503, { ok: false, error: 'not-connected' })
+          return
+        }
+        try {
+          const sock = getSock()
+          if (!sock) {
+            sendJson(res, 503, { ok: false, error: 'not-connected' })
+            return
+          }
+          const jid = `${digits}@s.whatsapp.net`
+          const checkRes = await sock.onWhatsApp(jid)
+          const check = checkRes?.[0]
+          if (!check || !check.exists) {
+            sendJson(res, 404, { ok: false, error: 'not-on-whatsapp' })
+            return
+          }
+          await sock.sendMessage(check.jid, { text })
+          console.log(`Outbound message sent to ${maskNumber(digits)}`)
+          sendJson(res, 200, { ok: true })
+        } catch (err) {
+          console.error(`Outbound send failed for ${maskNumber(digits)}:`, err)
+          sendJson(res, 500, { ok: false, error: 'send-failed' })
+        }
+        return
+      }
+
       sendJson(res, 404, { ok: false, error: 'not-found' })
     } catch (err) {
       console.error('Pairing server error:', err)
